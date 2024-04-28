@@ -6,14 +6,29 @@ if exists("g:loaded_fittencode")
   endif
 let g:loaded_fittencode = 1
 
+let s:is_nvim = has('nvim')
+let s:has_nvim_inline = has('nvim-0.10.0')
+
 let s:hlgroup = 'FittenSuggestion'
+let g:nvim_ns_id = s:is_nvim ? nvim_create_namespace(s:hlgroup) : -1
+
+function! s:echow(msg)
+    if !s:is_nvim
+        echow a:msg
+    else
+        call nvim_echo([[a:msg]], v:false, {})
+    endif
+endfunction
+
 function! SetSuggestionStyle() abort
     if &t_Co == 256
         hi def FittenSuggestion guifg=#808080 ctermfg=244
     else
         hi def FittenSuggestion guifg=#808080 ctermfg=8
     endif
-    call prop_type_add(s:hlgroup, {'highlight': s:hlgroup})
+    if !s:is_nvim
+        call prop_type_add(s:hlgroup, {'highlight': s:hlgroup})
+    endif
 endfunction
 
 function! Fittenlogin(account, password)
@@ -59,7 +74,6 @@ endfunction
 
 command! Fittenlogout call Fittenlogout()
 
-
 function! CheckLoginStatus()
     if filereadable($HOME . '/.vimapikey')
         echo "Logged in"
@@ -70,7 +84,11 @@ endfunction
 
 function! ClearCompletion()
     unlet! b:fitten_suggestion
-    call prop_remove({'type': s:hlgroup, 'all': v:true})
+    if !s:is_nvim
+        call prop_remove({'type': s:hlgroup, 'all': v:true})
+    else
+        call nvim_buf_clear_namespace(0, g:nvim_ns_id, 0, -1)
+    endif
 endfunction
 
 function! ClearCompletionByCursorMoved()
@@ -90,6 +108,10 @@ function! CodeCompletion()
         let l:col_num = getcurpos()[2]
     else
         let l:col_num = getcurpos()[2] + 1
+    endif
+
+    if s:is_nvim && !s:has_nvim_inline && l:col_num - 1 < len(getline(l:line_num))
+        return
     endif
     
     let l:prefix = join(getline(1, l:line_num - 1), '\n')
@@ -124,7 +146,7 @@ function! CodeCompletion()
     call delete(l:tempfile)
 
     if v:shell_error
-        echow "Request failed"
+        call s:echow("Request failed")
         return
     endif
     let l:completion_data = json_decode(l:response)
@@ -137,7 +159,7 @@ function! CodeCompletion()
     let l:generated_text = substitute(l:generated_text, '<.endoftext.>', '', 'g')
 
     if empty(l:generated_text)
-        echow "Fitten Code: No More Suggestions"
+        call s:echow("Fitten Code: No More Suggestions")
         call timer_start(2000, {-> execute('echo ""')})
         return
     endif
@@ -147,6 +169,7 @@ function! CodeCompletion()
         call remove(l:text, -1)
     endif
 
+    let l:virt_lines = []
     let l:is_first_line = v:true
     for line in text
         if empty(line)
@@ -154,11 +177,30 @@ function! CodeCompletion()
         endif
         if l:is_first_line is v:true
             let l:is_first_line = v:false
-            call prop_add(line('.'), l:col_num, {'type': s:hlgroup, 'text': line})
+            if !s:is_nvim
+                call prop_add(line('.'), l:col_num, {'type': s:hlgroup, 'text': line})
+            else
+                call nvim_buf_set_extmark(0, g:nvim_ns_id, line('.') - 1, l:col_num - 1, #{
+                    \ virt_text: [[line, s:hlgroup]],
+                    \ virt_text_pos: s:has_nvim_inline ? 'inline' : 'overlay',
+                    \ hl_mode: 'combine',
+                    \ })
+            endif
         else
-            call prop_add(line('.'), 0, {'type': s:hlgroup, 'text_align': 'below', 'text': line})
+            if !s:is_nvim
+                call prop_add(line('.'), 0, {'type': s:hlgroup, 'text_align': 'below', 'text': line})
+            else
+                call add(l:virt_lines, [[line, s:hlgroup]])
+            endif
         endif
     endfor
+
+    if s:is_nvim && len(l:virt_lines) > 0
+        call nvim_buf_set_extmark(0, g:nvim_ns_id, line('.') - 1, 0, #{
+            \ virt_lines: virt_lines,
+            \ hl_mode: 'combine',
+            \ })
+    endif
 
     let b:fitten_suggestion = l:generated_text
 endfunction
@@ -183,7 +225,7 @@ function FittenAccept()
 
     set paste
 
-    execute "normal i" . FittenAcceptMain()
+    execute "silent! normal i" . FittenAcceptMain()
 
     let &paste = l:oldval
 
@@ -204,7 +246,7 @@ if !exists('g:fitten_accept_key')
 endif
 function! FittenMapping()
     execute "inoremap" keytrans(g:fitten_trigger) '<Cmd>call CodeCompletion()<CR>'
-    if g:fitten_accept_key isnot v:none
+    if !empty(g:fitten_accept_key)
         execute 'inoremap' keytrans(g:fitten_accept_key) '<C-r>=FittenAccept()<CR>'
     endif
 endfunction
@@ -218,4 +260,3 @@ augroup fittencode
     " Map tab using vim enter so it occurs after all other sourcing.
     autocmd VimEnter             * call FittenMapping()
 augroup END
-
