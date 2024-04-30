@@ -247,7 +247,7 @@ endif
 function! FittenMapping()
     execute "inoremap" keytrans(g:fitten_trigger) '<Cmd>call CodeCompletion()<CR>'
     if !empty(g:fitten_accept_key)
-        execute 'inoremap' keytrans(g:fitten_accept_key) '<C-r>=FittenAccept()<CR>'
+        execute 'inoremap' keytrans(g:fitten_accept_key) '<C-r>=FittenAccept()<CR><Right>'
     endif
 endfunction
 
